@@ -42,7 +42,7 @@ connection_mother::connection_mother(worker * worker_obj, config * config_obj, M
 	address.sin_port = htons(conf->port);
 	
 	// Bind
-	if(bind(listen_socket, (sockaddr *) &address, sizeof(address)) == -1) {
+	if(::bind(listen_socket, (sockaddr *) &address, sizeof(address)) == -1) {
 		std::cout << "Bind failed " << errno << std::endl;
 	}
 	

@@ -14,10 +14,10 @@ config::config() {
 	
 	reap_peers_interval = 1800;
 	
-	mysql_db = "gazelle";
-	mysql_host = "127.0.0.1:3306";
-	mysql_username = "***";
-	mysql_password = "***";
+	mongo_db = "narwhal";
+	mongo_host = "127.0.0.1:27017";
+	mongo_username = "***";
+	mongo_password = "***";
 	
 	site_password="********************************"; // MUST BE 32 CHARS
 }
