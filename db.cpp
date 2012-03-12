@@ -161,13 +161,13 @@ void Mongo::record_peer(int uid, int fid, int active, std::string peerid, std::s
 }
 
 void Mongo::record_peer_hist(int uid, long long downloaded, long long left, long long uploaded, long long upspeed, long long downspeed, long long tstamp, std::string &peer_id, int tid) {
-	boost::mutex::scoped_lock (peer_hist_buffer_lock);
-        mongo_query m;
-        m.table = ".users";
-        m.query = mongo::Query(BSON("id" << uid << "history.tid" << tid));
-        m.data = BSON("$set" << BSON("history.downloaded" << downloaded << "history.remaining" << left << "history.uploaded" << uploaded << "history.upspeed" << upspeed << "history.downspeed" << downspeed << "history.timespent" << (tstamp) << "history.peer_id" << peer_id));
+   boost::mutex::scoped_lock (peer_hist_buffer_lock);
+   mongo_query m;
+   m.table = ".users";
+   m.query = mongo::Query(BSON("id" << uid << "history.tid" << tid));
+   m.data = BSON("$set" << BSON("history.downloaded" << downloaded << "history.remaining" << left << "history.uploaded" << uploaded << "history.upspeed" << upspeed << "history.downspeed" << downspeed << "history.timespent" << (tstamp) << "history.peer_id" << peer_id));
 
-	update_peer_hist_buffer.push_back(m);
+   update_peer_hist_buffer.push_back(m);
 }
 
 void Mongo::record_snatch(int uid, int tid, time_t tstamp, std::string ip) {
