@@ -38,7 +38,7 @@ Mongo::Mongo(std::string mongo_db, std::string mongo_host, std::string username,
 
 void Mongo::load_torrents(std::unordered_map<std::string, torrent> &torrents) {
    mongo::BSONObj fields = BSON("id" << 1 << "info_hash" << 1 << "freetorrent" << 1 << "snatched" << 1);
-   std::auto_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".torrents", 
+   std::unique_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".torrents", 
          mongo::Query().sort("id"), 0, 0, &fields);
 
    mongo::BSONObj doc;
@@ -63,7 +63,7 @@ void Mongo::load_torrents(std::unordered_map<std::string, torrent> &torrents) {
 void Mongo::load_users(std::unordered_map<std::string, user> &users) {
    //"SELECT ID, can_leech, torrent_pass FROM users_main WHERE Enabled='1';"
    mongo::BSONObj fields = BSON("id" << 1 << "can_leech" << 1 << "torrent_pass" << 1);
-   std::auto_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".users", mongo::Query(BSON("enabled" << 1)), 0, 0, &fields);
+   std::unique_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".users", mongo::Query(BSON("enabled" << 1)), 0, 0, &fields);
    
    mongo::BSONObj doc;
    while(cursor->more())
@@ -82,7 +82,7 @@ void Mongo::load_tokens(std::unordered_map<std::string, torrent> &torrents) {
    //"SELECT uf.UserID, t.info_hash FROM users_freeleeches AS uf JOIN torrents AS t ON t.ID = uf.TorrentID WHERE uf.Expired = '0';"
    //
    mongo::BSONObj fields = BSON("id" << 1 <<  "freeleeches.info_hash" << 1);
-   std::auto_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".users", mongo::Query(BSON("freeleeches.expired" << 0)), 0, 0, &fields);
+   std::unique_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".users", mongo::Query(BSON("freeleeches.expired" << 0)), 0, 0, &fields);
    mongo::BSONObj doc;
    while(cursor->more())
    {
@@ -100,7 +100,7 @@ void Mongo::load_tokens(std::unordered_map<std::string, torrent> &torrents) {
 void Mongo::load_whitelist(std::vector<std::string> &whitelist) {
    //"SELECT peer_id FROM xbt_client_whitelist;"
    mongo::BSONObj fields = BSON("peer_id" << 1);
-   std::auto_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".torrent_cleint_whitelist", mongo::Query(), 0, 0, &fields);
+   std::unique_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".torrent_client_whitelist", mongo::Query(), 0, 0, &fields);
    mongo::BSONObj doc;
    while(cursor->more())
    {
