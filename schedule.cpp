@@ -6,7 +6,7 @@
 #include "schedule.h"
 
 
-schedule::schedule(connection_mother * mother_obj, worker* worker_obj, config* conf_obj, mysql * db_obj) : mother(mother_obj), work(worker_obj), conf(conf_obj), db(db_obj) {
+schedule::schedule(connection_mother * mother_obj, worker* worker_obj, config* conf_obj, Mongo * db_obj) : mother(mother_obj), work(worker_obj), conf(conf_obj), db(db_obj) {
 	counter = 0;
 	last_opened_connections = 0;
 	

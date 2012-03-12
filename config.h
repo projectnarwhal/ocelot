@@ -20,10 +20,10 @@ class config {
 		unsigned int reap_peers_interval;
 		
 		// MySQL
-		std::string mysql_db;
-		std::string mysql_host;
-		std::string mysql_username;
-		std::string mysql_password;
+		std::string mongo_db;
+		std::string mongo_host;
+		std::string mongo_username;
+		std::string mongo_password;
 		
 		std::string site_password;
 		

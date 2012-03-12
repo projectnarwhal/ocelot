@@ -14,7 +14,7 @@
 
 //---------- Connection mother - spawns middlemen and lets them deal with the connection
 
-connection_mother::connection_mother(worker * worker_obj, config * config_obj, mysql * db_obj) : work(worker_obj), conf(config_obj), db(db_obj) {
+connection_mother::connection_mother(worker * worker_obj, config * config_obj, Mongo * db_obj) : work(worker_obj), conf(config_obj), db(db_obj) {
 	open_connections = 0;
 	opened_connections = 0;
 	

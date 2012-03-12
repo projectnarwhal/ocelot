@@ -13,456 +13,448 @@
 
 #define DB_LOCK_TIMEOUT 50
 
-mysql::mysql(std::string mysql_db, std::string mysql_host, std::string username, std::string password) {
-        if(!conn.connect(mysql_db.c_str(), mysql_host.c_str(), username.c_str(), password.c_str(), 0)) {
-                std::cout << "Could not connect to MySQL" << std::endl;
-                return;
-        }
+Mongo::Mongo(std::string mongo_db, std::string mongo_host, std::string username, std::string password) {
+   try
+   {
+      conn.connect("localhost");
+   }
+   catch(mongo::DBException &e)
+   {
+      std::cout << "Could not connect " << e.what() << std::endl;
+   }
 
-	db = mysql_db, server = mysql_host, db_user = username, pw = password;
-	u_active = false; t_active = false; p_active = false; s_active = false; tok_active = false; hist_active = false;
+   db = mongo_db, server = mongo_host, db_user = username, pw = password;
+   u_active = false; t_active = false; p_active = false; s_active = false; tok_active = false; hist_active = false;
 
-        std::cout << "Connected to MySQL" << std::endl;
-        update_user_buffer = "";
-        update_torrent_buffer = "";
-        update_peer_buffer = "";
-        update_snatch_buffer = "";
+   std::cout << "Connected to mongo" << std::endl;
+   update_user_buffer = std::vector<mongo_query>();
+   update_torrent_buffer = std::vector<mongo_query>();
+   update_peer_buffer = std::vector<mongo_query>();
+   update_snatch_buffer = std::vector<mongo_query>();
 
 
-        logger_ptr = logger::get_instance();
+   logger_ptr = logger::get_instance();
 }
 
-void mysql::load_torrents(std::unordered_map<std::string, torrent> &torrents) {
-        mysqlpp::Query query = conn.query("SELECT ID, info_hash, freetorrent, Snatched FROM torrents ORDER BY ID;");
-        if(mysqlpp::StoreQueryResult res = query.store()) {
-                mysqlpp::String one("1"); // Hack to get around bug in mysql++3.0.0
-                mysqlpp::String two("2");
-                size_t num_rows = res.num_rows();
-                for(size_t i = 0; i < num_rows; i++) {
-                        std::string info_hash;
-                        res[i][1].to_string(info_hash);
+void Mongo::load_torrents(std::unordered_map<std::string, torrent> &torrents) {
+   mongo::BSONObj fields = BSON("id" << 1 << "info_hash" << 1 << "freetorrent" << 1 << "snatched" << 1);
+   std::auto_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".torrents", 
+         mongo::Query().sort("id"), 0, 0, &fields);
 
-                        torrent t;
-                        t.id = res[i][0];
-                        if(res[i][2].compare(one) == 0) {
-                                t.free_torrent = FREE;
-                        } else if(res[i][2].compare(two) == 0) {
-                                t.free_torrent = NEUTRAL;
-                        } else {
-                                t.free_torrent = NORMAL;
-                        }
-                        t.balance = 0;
-                        t.completed = res[i][3];
-                        t.last_selected_seeder = "";
-                        torrents[info_hash] = t;
-                }
-        }
+   mongo::BSONObj doc;
+   while(cursor->more())
+   {
+      doc=cursor->next();
+      std::string info_hash = doc.getStringField("info_hash");
+      info_hash = hextostr(info_hash);
+      std::cout << "Info hash loaded: " << info_hash << std::endl << "error: " << conn.getLastError() << std::endl;
+      
+      torrent t;
+      t.id = doc.getIntField("id");
+      t.free_torrent = (doc.getIntField("freetorrent") == 1) ? FREE 
+         : (doc.getIntField("freetorrent") == 2) ? NEUTRAL  : NORMAL;
+      t.balance = 0;
+      t.completed = doc.getIntField("snatched");
+      t.last_selected_seeder = "";
+      torrents[info_hash] = t;
+   }
 }
 
-void mysql::load_users(std::unordered_map<std::string, user> &users) {
-        mysqlpp::Query query = conn.query("SELECT ID, can_leech, torrent_pass FROM users_main WHERE Enabled='1';");
-        if(mysqlpp::StoreQueryResult res = query.store()) {
-                size_t num_rows = res.num_rows();
-                for(size_t i = 0; i < num_rows; i++) {
-                        std::string passkey;
-                        res[i][2].to_string(passkey);
+void Mongo::load_users(std::unordered_map<std::string, user> &users) {
+   //"SELECT ID, can_leech, torrent_pass FROM users_main WHERE Enabled='1';"
+   mongo::BSONObj fields = BSON("id" << 1 << "can_leech" << 1 << "torrent_pass" << 1);
+   std::auto_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".users", mongo::Query(BSON("enabled" << 1)), 0, 0, &fields);
+   
+   mongo::BSONObj doc;
+   while(cursor->more())
+   {
+      doc=cursor->next();
+      std::string passkey = doc.getStringField("torrent_pass");
 
-                        user u;
-                        u.id = res[i][0];
-                        u.can_leech = res[i][1];
-                        users[passkey] = u;
-                }
-        }
+      user u;
+      u.id = doc.getIntField("id");
+      u.can_leech = doc.getIntField("can_leech");
+      users[passkey] = u;
+   }
 }
 
-void mysql::load_tokens(std::unordered_map<std::string, torrent> &torrents) {
-        mysqlpp::Query query = conn.query("SELECT uf.UserID, t.info_hash FROM users_freeleeches AS uf JOIN torrents AS t ON t.ID = uf.TorrentID WHERE uf.Expired = '0';");
-        if (mysqlpp::StoreQueryResult res = query.store()) {
-                size_t num_rows = res.num_rows();
-                for (size_t i = 0; i < num_rows; i++) {
-                        std::string info_hash;
-                        res[i][1].to_string(info_hash);
-                        std::unordered_map<std::string, torrent>::iterator it = torrents.find(info_hash);
-                        if (it != torrents.end()) {
-                                torrent &tor = it->second;
-                                tor.tokened_users.insert(res[i][0]);
-                        }
-                }
-        }
+void Mongo::load_tokens(std::unordered_map<std::string, torrent> &torrents) {
+   //"SELECT uf.UserID, t.info_hash FROM users_freeleeches AS uf JOIN torrents AS t ON t.ID = uf.TorrentID WHERE uf.Expired = '0';"
+   //
+   mongo::BSONObj fields = BSON("id" << 1 <<  "freeleeches.info_hash" << 1);
+   std::auto_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".users", mongo::Query(BSON("freeleeches.expired" << 0)), 0, 0, &fields);
+   mongo::BSONObj doc;
+   while(cursor->more())
+   {
+      doc=cursor->next();
+      std::string info_hash = doc.getStringField("freeleeches.info_hash");
+      std::unordered_map<std::string, torrent>::iterator it = torrents.find(info_hash);
+      if (it != torrents.end()) {
+         torrent &tor = it->second;
+         tor.tokened_users.insert(doc.getIntField("id"));
+      }
+   }
 }
 
 
-void mysql::load_whitelist(std::vector<std::string> &whitelist) {
-        mysqlpp::Query query = conn.query("SELECT peer_id FROM xbt_client_whitelist;");
-        if(mysqlpp::StoreQueryResult res = query.store()) {
-                size_t num_rows = res.num_rows();
-                for(size_t i = 0; i<num_rows; i++) {
-                        whitelist.push_back(res[i][0].c_str());
-                }
-        }
+void Mongo::load_whitelist(std::vector<std::string> &whitelist) {
+   //"SELECT peer_id FROM xbt_client_whitelist;"
+   mongo::BSONObj fields = BSON("peer_id" << 1);
+   std::auto_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".torrent_cleint_whitelist", mongo::Query(), 0, 0, &fields);
+   mongo::BSONObj doc;
+   while(cursor->more())
+   {
+      doc = cursor->next();
+      whitelist.push_back(doc.getStringField("peer_id"));
+   }
 }
 
-void mysql::record_token(std::string &record) {
-        boost::mutex::scoped_lock lock(user_token_lock);
-        if (update_token_buffer != "") {
-                update_token_buffer += ",";
-        }
-        update_token_buffer += record;
+void Mongo::record_token(int uid, int tid, long long downloaded_change) {
+   boost::mutex::scoped_lock lock(user_token_lock);
+   mongo_query m;
+   m.table = ".users";
+   m.query = mongo::Query(BSON("id" << uid << "freeleeches.id" << tid));
+   m.data = BSON("$inc" << BSON("downloaded" << downloaded_change));
+
+   update_token_buffer.push_back(m);
 }
 
-void mysql::record_user(std::string &record) {
-        boost::mutex::scoped_lock lock(user_buffer_lock);
-        if(update_user_buffer != "") {
-                update_user_buffer += ",";
-        }
-        update_user_buffer += record;
-}
-void mysql::record_torrent(std::string &record) {
-        boost::mutex::scoped_lock lock(torrent_buffer_lock);
-        if(update_torrent_buffer != "") {
-                update_torrent_buffer += ",";
-        }
-        update_torrent_buffer += record;
-}
-void mysql::record_peer(std::string &record, std::string &ip, std::string &peer_id, std::string &useragent) {
-        boost::mutex::scoped_lock lock(peer_buffer_lock);
-        if(update_peer_buffer != "") {
-                update_peer_buffer += ",";
-        }
-        mysqlpp::Query q = conn.query();
-        q << record << mysqlpp::quote << ip << ',' << mysqlpp::quote << peer_id << ',' << mysqlpp::quote << useragent << "," << time(NULL) << ')';
+void Mongo::record_user(int id, long long uploaded_change, long long downloaded_change) {
+   boost::mutex::scoped_lock lock(user_buffer_lock);
+   mongo_query m;
+   m.table = ".users";
+   m.query = mongo::Query(BSON("id" << id));
+   m.data = BSON("$inc" << BSON("uploaded" << uploaded_change << "downloaded" << downloaded_change));
 
-        update_peer_buffer += q.str();
+   update_user_buffer.push_back(m);
 }
 
-void mysql::record_peer_hist(std::string &record, std::string &peer_id, int tid){
+
+//TODO: last_action = IF(VALUES(Seeders) > 0, NOW(), last_action);
+void Mongo::record_torrent(int tid, int seeders, int leechers, int snatched_change, int balance) {
+   boost::mutex::scoped_lock lock(torrent_buffer_lock);
+   mongo_query m;
+   m.table = ".torrents";
+   m.query = mongo::Query(BSON("id" << tid));
+   m.data = BSON("$set" << BSON("seeders" << seeders << "leechers" << leechers << "balance" << balance) << "$inc" << BSON("snatched" << snatched_change));
+
+   update_torrent_buffer.push_back(m);
+}
+
+/*void record_peer(int uid, int fid, int active, std::string peerid, std::string useragent, std::string &ip, long long uploaded, long long downloaded, long long upspeed, long long downspeed, long long left, time_t timespent, unsigned int announces) { 
+   boost::mutex::scoped_lock lock(peer_buffer_lock);
+   //q << record << mongopp::quote << ip << ',' << mongopp::quote << peer_id << ',' << mongopp::quote << useragent << "," << time(NULL) << ')';
+
+   update_peer_buffer += q.str();
+}*/
+
+// TODO: Double check timespet is correctly upserted and mtime
+// Deal with ip, peer_id, useragent better
+void Mongo::record_peer(int uid, int fid, int active, std::string peerid, std::string useragent, std::string &ip, long long uploaded, long long downloaded, long long upspeed, long long downspeed, long long left, time_t timespent, unsigned int announces) {
+   boost::mutex::scoped_lock (peer_buffer_lock);
+   mongo_query m;
+   m.table = ".users";
+   m.query = mongo::Query(BSON("id" << uid << "files.id" << fid));
+   m.data = BSON("$set" << BSON("files.active" << active << "files.uploaded" << uploaded << "files.downloaded" << downloaded << "files.upspeed" << upspeed << "files.downspeed" << downspeed << "files.remaining" << left << "files.timespent" << static_cast<long long>(timespent) << "files.announced" << announces << "files.useragent" << useragent << "files.ip" << ip << "files.peerid" << peerid << "files.mtime" << static_cast<long long>(time(NULL))));
+   //q << record << ',' << mongopp::quote << peer_id << ',' << tid << ',' << time(NULL) << ')';
+   update_peer_buffer.push_back(m);
+}
+
+void Mongo::record_peer_hist(int uid, long long downloaded, long long left, long long uploaded, long long upspeed, long long downspeed, long long tstamp, std::string &peer_id, int tid) {
 	boost::mutex::scoped_lock (peer_hist_buffer_lock);
-	if (update_peer_hist_buffer != "") {
-		update_peer_hist_buffer += ",";
-	}
-	mysqlpp::Query q = conn.query();
-	q << record << ',' << mysqlpp::quote << peer_id << ',' << tid << ',' << time(NULL) << ')';
-	update_peer_hist_buffer += q.str();
+        mongo_query m;
+        m.table = ".users";
+        m.query = mongo::Query(BSON("id" << uid << "history.tid" << tid));
+        m.data = BSON("$set" << BSON("history.downloaded" << downloaded << "history.remaining" << left << "history.uploaded" << uploaded << "history.upspeed" << upspeed << "history.downspeed" << downspeed << "history.timespent" << (tstamp) << "history.peer_id" << peer_id));
+
+	update_peer_hist_buffer.push_back(m);
 }
 
-void mysql::record_snatch(std::string &record) {
-        boost::mutex::scoped_lock lock(mysql::snatch_buffer_lock);
-        if(update_snatch_buffer != "") {
-                update_snatch_buffer += ",";
-        }
-        update_snatch_buffer += record;
+void Mongo::record_snatch(int uid, int tid, time_t tstamp, std::string ip) {
+   boost::mutex::scoped_lock lock(snatch_buffer_lock);
+   mongo_query m;
+   m.table = ".users";
+   m.query = mongo::Query(BSON("id" << uid));
+   m.data = BSON("snatches.id" << tid << "snatches.tstamp" << static_cast<long long>(tstamp) << "snatches.ip" << ip);
+
+   update_snatch_buffer.push_back(m);
 }
 
-bool mysql::all_clear() {
-	return (user_queue.size() == 0 && torrent_queue.size() == 0 && peer_queue.size() == 0 && snatch_queue.size() == 0 && token_queue.size() == 0 && peer_hist_queue.size() == 0);
+bool Mongo::all_clear() {
+   return (user_queue.size() == 0 && torrent_queue.size() == 0 && peer_queue.size() == 0 && snatch_queue.size() == 0 && token_queue.size() == 0 && peer_hist_queue.size() == 0);
 }
 
-void mysql::flush() {
-	flush_users();
-	flush_torrents();
-	flush_snatches();
-	flush_peers();
-	flush_peer_hist();
-	flush_tokens();
+void Mongo::flush() {
+   flush_users();
+   flush_torrents();
+   flush_snatches();
+   flush_peers();
+   flush_peer_hist();
+   flush_tokens();
 }
 
-void mysql::flush_users() {
-	std::string sql;
-	boost::mutex::scoped_lock lock(user_buffer_lock);
-	if (update_user_buffer == "") {
-		return;
-	}
-	sql = "INSERT INTO users_main (ID, Uploaded, Downloaded) VALUES " + update_user_buffer +
-		" ON DUPLICATE KEY UPDATE Uploaded = Uploaded + VALUES(Uploaded), Downloaded = Downloaded + VALUES(Downloaded)";
-	user_queue.push(sql);
-	update_user_buffer.clear();
-	if (user_queue.size() == 1 && u_active == false) {
-		boost::thread thread(&mysql::do_flush_users, this);
-	}
+void Mongo::flush_users() {
+   boost::mutex::scoped_lock lock(user_buffer_lock);
+   if (update_user_buffer.empty()) {
+      return;
+   }
+   user_queue.push(update_user_buffer);
+   update_user_buffer.clear();
+   if (user_queue.size() == 1 && u_active == false) {
+      boost::thread thread(&Mongo::do_flush_users, this);
+   }
 }
 
-void mysql::flush_torrents() {
-	std::string sql;
-	boost::mutex::scoped_lock lock(torrent_buffer_lock);
-	if (update_torrent_buffer == "") {
-		return;
-	}
-	sql = "INSERT INTO torrents (ID,Seeders,Leechers,Snatched,Balance) VALUES " + update_torrent_buffer +
-		" ON DUPLICATE KEY UPDATE Seeders=VALUES(Seeders), Leechers=VALUES(Leechers), " +
-		"Snatched=Snatched+VALUES(Snatched), Balance=VALUES(Balance), last_action = " +
-		"IF(VALUES(Seeders) > 0, NOW(), last_action)";
-	torrent_queue.push(sql);
-	update_torrent_buffer.clear();
-	sql.clear();
-	sql = "DELETE FROM torrents WHERE info_hash = ''";
-	torrent_queue.push(sql);
-	if (torrent_queue.size() == 2 && t_active == false) {
-		boost::thread thread(&mysql::do_flush_torrents, this);
-	}
+void Mongo::flush_torrents() {
+   boost::mutex::scoped_lock lock(torrent_buffer_lock);
+   if (update_torrent_buffer.empty()) {
+      return;
+   }
+   torrent_queue.push(update_torrent_buffer);
+   update_torrent_buffer.clear();
+
+   if (torrent_queue.size() == 1 && t_active == false) {
+      boost::thread thread(&Mongo::do_flush_torrents, this);
+   }
 }
 
-void mysql::flush_snatches() {
-	std::string sql;
-	boost::mutex::scoped_lock lock(snatch_buffer_lock);
-	if (update_snatch_buffer == "" ) {
-		return;
-	}
-	sql = "INSERT INTO xbt_snatched (uid, fid, tstamp, IP) VALUES " + update_snatch_buffer;
-	snatch_queue.push(sql);
-	update_snatch_buffer.clear();
-	if (snatch_queue.size() == 1 && s_active == false) {
-		boost::thread thread(&mysql::do_flush_snatches, this);
-	}
+void Mongo::flush_snatches() {
+   boost::mutex::scoped_lock lock(snatch_buffer_lock);
+   if (update_snatch_buffer.empty()) {
+      return;
+   }
+   snatch_queue.push(update_snatch_buffer);
+   update_snatch_buffer.clear();
+   if (snatch_queue.size() == 1 && s_active == false) {
+      boost::thread thread(&Mongo::do_flush_snatches, this);
+   }
 }
 
-void mysql::flush_peers() {
-	std::string sql;
-	boost::mutex::scoped_lock lock(peer_buffer_lock);
-	// because xfu inserts are slow and ram is not infinite we need to
-	// limit this queue's size
-	if (peer_queue.size() >= 1000) {
-		peer_queue.pop();
-	}
-	if (update_peer_buffer == "") {
-		return;
-	}
-	
-	if (peer_queue.size() == 0) {
-		sql = "SET session sql_log_bin = 0";
-		peer_queue.push(sql);
-		sql.clear();
-	}
-	
-	sql = "INSERT INTO xbt_files_users (uid,fid,active,uploaded,downloaded,upspeed,downspeed,remaining," +
-		std::string("timespent,announced,ip,peer_id,useragent,mtime) VALUES ") + update_peer_buffer + 
-				" ON DUPLICATE KEY UPDATE active=VALUES(active), uploaded=VALUES(uploaded), " +
-				"downloaded=VALUES(downloaded), upspeed=VALUES(upspeed), " +
-				"downspeed=VALUES(downspeed), remaining=VALUES(remaining), " +
-				"timespent=VALUES(timespent), announced=VALUES(announced), " + 
-				"mtime=VALUES(mtime)";
-	peer_queue.push(sql);
-	update_peer_buffer.clear();
-	if (peer_queue.size() == 2 && p_active == false) {
-		boost::thread thread(&mysql::do_flush_peers, this);
-	}
+void Mongo::flush_peers() {
+   boost::mutex::scoped_lock lock(peer_buffer_lock);
+   // because xfu inserts are slow and ram is not infinite we need to
+   // limit this queue's size
+   if (peer_queue.size() >= 1000) {
+      peer_queue.pop();
+   }
+   if (update_peer_buffer.empty()) {
+      return;
+   }
+
+   /*if (peer_queue.size() == 0) {
+      sql = "SET session sql_log_bin = 0";
+      peer_queue.push(sql);
+      sql.clear();
+   }*/
+
+   peer_queue.push(update_peer_buffer);
+   update_peer_buffer.clear();
+   if (peer_queue.size() == 1 && p_active == false) {
+      boost::thread thread(&Mongo::do_flush_peers, this);
+   }
 }
 
-void mysql::flush_peer_hist() {
-	std::string sql;
-	boost::mutex::scoped_lock lock(peer_hist_buffer_lock);
-	if (update_peer_hist_buffer == "") {
-		return;
-	}
+void Mongo::flush_peer_hist() {
+   boost::mutex::scoped_lock lock(peer_hist_buffer_lock);
+   if (update_peer_hist_buffer.empty()) {
+      return;
+   }
 
-	if (peer_hist_queue.size() == 0) {
-		sql = "SET session sql_log_bin = 0";
-		peer_hist_queue.push(sql);
-		sql.clear();
-	}
+   /*if (peer_hist_queue.size() == 0) {
+      sql = "SET session sql_log_bin = 0";
+      peer_hist_queue.push(sql);
+      sql.clear();
+   }*/
 
-	sql = "INSERT IGNORE INTO xbt_peers_history (uid, downloaded, remaining, uploaded, upspeed, downspeed, timespent, peer_id, fid, mtime) VALUES " + update_peer_hist_buffer;
-	peer_hist_queue.push(sql);
-	update_peer_hist_buffer.clear();
-	if (peer_hist_queue.size() == 2 && hist_active == false) {
-		boost::thread thread(&mysql::do_flush_peer_hist, this);
-	}
+   peer_hist_queue.push(update_peer_hist_buffer);
+   update_peer_hist_buffer.clear();
+   if (peer_hist_queue.size() == 1 && hist_active == false) {
+      boost::thread thread(&Mongo::do_flush_peer_hist, this);
+   }
 }
 
-void mysql::flush_tokens() {
-	std::string sql;
-	boost::mutex::scoped_lock lock(user_token_lock);
-	if (update_token_buffer == "") {
-		return;
-	}
-	sql = "INSERT INTO users_freeleeches (UserID, TorrentID, Downloaded) VALUES " + update_token_buffer +
-		" ON DUPLICATE KEY UPDATE Downloaded = Downloaded + VALUES(Downloaded)";
-	token_queue.push(sql);
-	update_token_buffer.clear();
-	if (token_queue.size() == 1 && tok_active == false) {
-		boost::thread(&mysql::do_flush_tokens, this);
-	}
+void Mongo::flush_tokens() {
+   std::string sql;
+   boost::mutex::scoped_lock lock(user_token_lock);
+   if (update_token_buffer.empty()) {
+      return;
+   }
+   token_queue.push(update_token_buffer);
+   update_token_buffer.clear();
+   if (token_queue.size() == 1 && tok_active == false) {
+      boost::thread(&Mongo::do_flush_tokens, this);
+   }
 }
 
-void mysql::do_flush_users() {
-	u_active = true;
-	mysqlpp::Connection c(db.c_str(), server.c_str(), db_user.c_str(), pw.c_str(), 0);
-	while (user_queue.size() > 0) {
-		try {
-			std::string sql = user_queue.front();
-			mysqlpp::Query query = c.query(sql);
-			if (!query.exec()) {
-				std::cout << "User flush failed (" << user_queue.size() << " remain)" << std::endl;
-				sleep(3);
-				continue;
-			} else {
-				boost::mutex::scoped_lock lock(user_buffer_lock);
-				user_queue.pop();
-				std::cout << "Users flushed (" << user_queue.size() << " remain)" << std::endl;
-			}
-		} 
-		catch (const mysqlpp::BadQuery &er) {
-			std::cerr << "Query error: " << er.what() << " in flush users with a qlength: " << user_queue.front().size() << " queue size: " << user_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		} catch (const mysqlpp::Exception &er) {
-			std::cerr << "Query error: " << er.what() << " in flush users with a qlength: " << user_queue.front().size() <<  " queue size: " << user_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		}
-	}
-	u_active = false;
+void Mongo::do_flush_users() {
+   u_active = true;
+   mongo::DBClientConnection c;
+   c.connect(server);
+   while (user_queue.size() > 0) {
+      std::vector<mongo_query> qv = user_queue.front();
+      while(!qv.empty())
+      {
+         mongo_query q = qv.back();
+         c.update(db + q.table, q.query, q.data, true);
+         if(!c.getLastError().empty())
+         {
+            std::cout << "User flush error: " << c.getLastError() << ". " << user_queue.size() << " don't remain." << std::endl;
+            sleep(3);
+            continue;
+         }
+         else
+         {
+            qv.pop_back();
+            std::cout << "Users flushed (" << user_queue.size() << " remain)" << std::endl;
+         }
+      }
+      boost::mutex::scoped_lock lock(user_buffer_lock);
+      user_queue.pop();
+   } 
+   u_active = false;
 }
 
-void mysql::do_flush_torrents() {
-	t_active = true;
-	mysqlpp::Connection c(db.c_str(), server.c_str(), db_user.c_str(), pw.c_str(), 0);
-	while (torrent_queue.size() > 0) {
-		try {
-			std::string sql = torrent_queue.front();
-			if (sql == "") {
-				torrent_queue.pop();
-				continue;
-			}
-			mysqlpp::Query query = c.query(sql);
-			if (!query.exec()) {
-				std::cout << "Torrent flush failed (" << torrent_queue.size() << " remain)" << std::endl;
-				sleep(3);
-				continue;
-			} else {
-				boost::mutex::scoped_lock lock(torrent_buffer_lock);
-				torrent_queue.pop();
-				std::cout << "Torrents flushed (" << torrent_queue.size() << " remain)" << std::endl;
-			}
-		}
-		catch (const mysqlpp::BadQuery &er) {
-			std::cerr << "Query error: " << er.what() << " in flush torrents with a qlength: " << torrent_queue.front().size() << " queue size: " << torrent_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		} catch (const mysqlpp::Exception &er) {
-			std::cerr << "Query error: " << er.what() << " in flush torrents with a qlength: " << torrent_queue.front().size() << " queue size: " << torrent_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		}
-	}
-	t_active = false;
+void Mongo::do_flush_torrents() {
+   t_active = true;
+   mongo::DBClientConnection c;
+   c.connect(server);
+   while (torrent_queue.size() > 0) {
+      std::vector<mongo_query> qv = torrent_queue.front();
+      while(!qv.empty())
+      {
+         mongo_query q = qv.back();
+         c.update(db + q.table, q.query, q.data, true);
+         
+         if(!c.getLastError().empty())
+         {
+            std::cout << "Torrent flush error: " << c.getLastError() << ". " << torrent_queue.size() << " don't remain." << std::endl;
+            sleep(3);
+            continue;
+         }
+         else
+         {
+            qv.pop_back();
+            std::cout << "Torrents flushed (" << torrent_queue.size() << " remain)" << std::endl;
+         }
+      }
+      boost::mutex::scoped_lock lock(torrent_buffer_lock);
+      torrent_queue.pop();
+   }
+   t_active = false;
 }
 
-void mysql::do_flush_peers() {
-	p_active = true;
-	mysqlpp::Connection c(db.c_str(), server.c_str(), db_user.c_str(), pw.c_str(), 0);
-	while (peer_queue.size() > 0) {
-		try {
-			std::string sql = peer_queue.front();
-			mysqlpp::Query query = c.query(sql);
-			if (!query.exec()) {
-				std::cout << "Peer flush failed (" << peer_queue.size() << " remain)" << std::endl;
-				sleep(3);
-				continue;
-			} else {
-				boost::mutex::scoped_lock lock(peer_buffer_lock);
-				peer_queue.pop();
-				std::cout << "Peers flushed (" << peer_queue.size() << " remain)" << std::endl;
-			}
-		}
-		catch (const mysqlpp::BadQuery &er) {
-			std::cerr << "Query error: " << er.what() << " in flush peers with a qlength: " << peer_queue.front().size() << " queue size: " << peer_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		} catch (const mysqlpp::Exception &er) {
-			std::cerr << "Query error: " << er.what() << " in flush peers with a qlength: " << peer_queue.front().size() << " queue size: " << peer_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		}
-	}
-	p_active = false;
+void Mongo::do_flush_peers() {
+   p_active = true;
+   mongo::DBClientConnection c;
+   c.connect(server);
+   while (peer_queue.size() > 0) {
+      std::vector<mongo_query> qv = peer_queue.front();
+      while(!qv.empty())
+      {
+         mongo_query q = qv.back();
+         c.update(db + q.table, q.query, q.data, true);
+         
+         if(!c.getLastError().empty())
+         {
+            std::cout << "Peer flush error: " << c.getLastError() << ". " << peer_queue.size() << " don't remain." << std::endl;
+            sleep(3);
+            continue;
+         }
+         else
+         {
+            qv.pop_back();
+            std::cout << "Peer flushed (" << peer_queue.size() << " remain)" << std::endl;
+         }
+      }
+      boost::mutex::scoped_lock lock(peer_buffer_lock);
+      peer_queue.pop();
+   }
+   p_active = false;
 }
 
-void mysql::do_flush_peer_hist() {
-	hist_active = true;
-	mysqlpp::Connection c(db.c_str(), server.c_str(), db_user.c_str(), pw.c_str(), 0);
-	while (peer_hist_queue.size() > 0) {
-		try {
-			std::string sql = peer_hist_queue.front();
-			mysqlpp::Query query = c.query(sql);
-			if (!query.exec()) {
-				std::cout << "Peer history flush failed (" << peer_hist_queue.size() << " remain)" << std::endl;
-				sleep(3);
-				continue;
-			} else {
-				boost::mutex::scoped_lock lock(peer_hist_buffer_lock);
-				peer_hist_queue.pop();
-				std::cout << "Peer history flushed (" << peer_hist_queue.size() << " remain)" << std::endl;
-			}
-		}
-		catch (const mysqlpp::BadQuery &er) {
-			std::cerr << "Query error: " << er.what() << " in flush peer history with a qlength: " << peer_hist_queue.front().size() << " queue size: " << peer_hist_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		} catch (const mysqlpp::Exception &er) {
-			std::cerr << "Query error: " << er.what() << " in flush peer history with a qlength: " << peer_hist_queue.front().size() << " queue size: " << peer_hist_queue.size() << std::endl;
-		sleep(3);
-		continue;
-		}
-	}
-	hist_active = false;
+void Mongo::do_flush_peer_hist() {
+   hist_active = true;
+   mongo::DBClientConnection c;
+   c.connect(server);
+   while (peer_hist_queue.size() > 0) {
+      std::vector<mongo_query> qv = peer_hist_queue.front();
+      while(!qv.empty())
+      {
+         mongo_query q = qv.back();
+         c.update(db + q.table, q.query, q.data, true);
+         
+         if(!c.getLastError().empty())
+         {
+            std::cout << "Peer hist flush error: " << c.getLastError() << ". " << peer_hist_queue.size() << " don't remain." << std::endl;
+            sleep(3);
+            continue;
+         }
+         else
+         {
+            qv.pop_back();
+            std::cout << "Peer hist flushed (" << peer_hist_queue.size() << " remain)" << std::endl;
+         }
+      }
+      boost::mutex::scoped_lock lock(peer_hist_buffer_lock);
+      peer_hist_queue.pop();
+   }
+   hist_active = false;
 }
 
-void mysql::do_flush_snatches() {
-	s_active = true;
-	mysqlpp::Connection c(db.c_str(), server.c_str(), db_user.c_str(), pw.c_str(), 0);
-	while (snatch_queue.size() > 0) {
-		try {
-			std::string sql = snatch_queue.front();
-			mysqlpp::Query query = c.query(sql);
-			if (!query.exec()) {
-				std::cout << "Snatch flush failed (" << snatch_queue.size() << " remain)" << std::endl;
-				sleep(3);
-				continue;
-			} else {
-				boost::mutex::scoped_lock lock(snatch_buffer_lock);
-				snatch_queue.pop();
-				std::cout << "Snatches flushed (" << snatch_queue.size() << " remain)" << std::endl;
-			}
-		} 
-		catch (const mysqlpp::BadQuery &er) {
-			std::cerr << "Query error: " << er.what() << " in flush snatches with a qlength: " << snatch_queue.front().size() << " queue size: " << snatch_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		} catch (const mysqlpp::Exception &er) {
-			std::cerr << "Query error: " << er.what() << " in flush snatches with a qlength: " << snatch_queue.front().size() << " queue size: " << snatch_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		}
-	}
-	s_active = false;
+void Mongo::do_flush_snatches() {
+   s_active = true;
+   mongo::DBClientConnection c;
+   c.connect(server);
+   while (snatch_queue.size() > 0) {
+      std::vector<mongo_query> qv = snatch_queue.front();
+      while(!qv.empty())
+      {
+         mongo_query q = qv.back();
+         c.update(db + q.table, q.query, q.data, true);
+         
+         if(!c.getLastError().empty())
+         {
+            std::cout << "Snatch flush error: " << c.getLastError() << ". " << snatch_queue.size() << " don't remain." << std::endl;
+            sleep(3);
+            continue;
+         }
+         else
+         {
+            qv.pop_back();
+            std::cout << "Snatch flushed (" << snatch_queue.size() << " remain)" << std::endl;
+         }
+      }
+      boost::mutex::scoped_lock lock(snatch_buffer_lock);
+      snatch_queue.pop();
+   }
+   s_active = false;
 }
 
-void mysql::do_flush_tokens() {
-	tok_active = true;
-	mysqlpp::Connection c(db.c_str(), server.c_str(), db_user.c_str(), pw.c_str(), 0);
-	while (token_queue.size() > 0) {
-		try {
-			std::string sql = token_queue.front();
-			mysqlpp::Query query = c.query(sql);
-			if (!query.exec()) {
-				std::cout << "Token flush failed (" << token_queue.size() << " remain)" << std::endl;
-				sleep(3);
-				continue;
-			} else {
-				boost::mutex::scoped_lock lock(user_token_lock);
-				token_queue.pop();
-				std::cout << "Tokens flushed (" << token_queue.size() << " remain)" << std::endl;
-			}
-		}
-		catch (const mysqlpp::BadQuery &er) {
-			std::cerr << "Query error: " << er.what() << " in flush tokens with a qlength: " << token_queue.front().size() << " queue size: " << token_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		} catch (const mysqlpp::Exception &er) {
-			std::cerr << "Query error: " << er.what() << " in flush tokens with a qlength: " << token_queue.front().size() << " queue size: " << token_queue.size() << std::endl;
-			sleep(3);
-			continue;
-		}
-	}
-	tok_active = false;
+void Mongo::do_flush_tokens() {
+   tok_active = true;
+   mongo::DBClientConnection c;
+   c.connect(server);
+   while (token_queue.size() > 0) {
+      std::vector<mongo_query> qv = token_queue.front();
+      while(!qv.empty())
+      {
+         mongo_query q = qv.back();
+         c.update(db + q.table, q.query, q.data, true);
+         
+         if(!c.getLastError().empty())
+         {
+            std::cout << "Token flush error: " << c.getLastError() << ". " << token_queue.size() << " don't remain." << std::endl;
+            sleep(3);
+            continue;
+         }
+         else
+         {
+            qv.pop_back();
+            std::cout << "Token flushed (" << token_queue.size() << " remain)" << std::endl;
+         }
+      }
+      boost::mutex::scoped_lock lock(user_token_lock);
+      token_queue.pop();
+   }
+   tok_active = false;
 }

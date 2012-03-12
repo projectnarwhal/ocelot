@@ -16,13 +16,13 @@ class worker {
 		user_list users_list;
 		std::vector<std::string> whitelist;
 		config * conf;
-		mysql * db;
+		Mongo* db;
 		void do_reap_peers();
 		tracker_status status;
 		site_comm s_comm;
 
 	public:
-		worker(torrent_list &torrents, user_list &users, std::vector<std::string> &_whitelist, config * conf_obj, mysql * db_obj, site_comm &sc);
+		worker(torrent_list &torrents, user_list &users, std::vector<std::string> &_whitelist, config * conf_obj, Mongo* db_obj, site_comm &sc);
 		std::string work(std::string &input, std::string &ip);
 		std::string error(std::string err);
 		std::string announce(torrent &tor, user &u, std::map<std::string, std::string> &params, std::map<std::string, std::string> &headers, std::string &ip);

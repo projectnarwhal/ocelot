@@ -1,6 +1,7 @@
 #include <string>
 #include <iostream>
 #include <sstream>
+#include <stdio.h>
 
 long strtolong(const std::string& str) {
 	std::istringstream stream (str);
@@ -55,4 +56,14 @@ std::string hex_decode(const std::string &in) {
 		out.push_back(x);
 	}
 	return out;
+}
+
+std::string hextostr(const std::string &in)
+{
+	std::string out;
+        const char *hex = in.c_str();
+        unsigned int ch;
+        for(;sscanf(hex, "%2x", &ch) == 1; hex+=2)
+           out += ch;
+        return out;
 }

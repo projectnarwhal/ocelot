@@ -7,7 +7,7 @@
 #include "logger.h"
 #include "site_comm.h"
 
-static mysql *db_ptr;
+static Mongo *db_ptr;
 static connection_mother *mother;
 static worker *work;
 static logger *log_ptr;
@@ -29,7 +29,7 @@ int main() {
 
 	log_ptr = new logger("debug.log");
 
-	mysql db(conf.mysql_db, conf.mysql_host, conf.mysql_username, conf.mysql_password);
+	Mongo db(conf.mongo_db, conf.mongo_host, conf.mongo_username, conf.mongo_password);
 	db_ptr = &db;
 
 	site_comm sc(conf);

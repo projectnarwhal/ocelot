@@ -52,14 +52,14 @@ class connection_mother {
 		socklen_t addr_len;
 		worker * work;
 		config * conf;
-		mysql * db;
+		Mongo * db;
 		ev::timer schedule_event;
 		
 		unsigned long opened_connections;
 		unsigned int open_connections;
 		
 	public: 
-		connection_mother(worker * worker_obj, config * config_obj, mysql * db_obj);
+		connection_mother(worker * worker_obj, config * config_obj, Mongo * db_obj);
 		
 		void increment_open_connections() { open_connections++; }
 		void decrement_open_connections() { open_connections--; }

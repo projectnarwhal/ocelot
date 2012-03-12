@@ -24,7 +24,7 @@
 #include <boost/bind.hpp>
 
 //---------- Worker - does stuff with input
-worker::worker(torrent_list &torrents, user_list &users, std::vector<std::string> &_whitelist, config * conf_obj, mysql * db_obj, site_comm &sc) : torrents_list(torrents), users_list(users), whitelist(_whitelist), conf(conf_obj), db(db_obj), s_comm(sc) {
+worker::worker(torrent_list &torrents, user_list &users, std::vector<std::string> &_whitelist, config * conf_obj, Mongo * db_obj, site_comm &sc) : torrents_list(torrents), users_list(users), whitelist(_whitelist), conf(conf_obj), db(db_obj), s_comm(sc) {
 	status = OPEN;
 }
 bool worker::signal(int sig) {
@@ -177,6 +177,10 @@ std::string worker::work(std::string &input, std::string &ip) {
 		// info_hash is a url encoded (hex) base 20 number
 		std::string info_hash_decoded = hex_decode(params["info_hash"]);
 		torrent_list::iterator tor = torrents_list.find(info_hash_decoded);
+
+               //DELETE ME
+                std::cout << "Info hash is " << info_hash_decoded << std::endl;
+
 		if(tor == torrents_list.end()) {
 			return error("unregistered torrent");
 		}
@@ -317,20 +321,13 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 			} else if(tor.free_torrent == FREE || sit != tor.tokened_users.end()) {
 				if(sit != tor.tokened_users.end()) {
 					expire_token = true;
-					std::stringstream record;
-					record << '(' << u.id << ',' << tor.id << ',' << downloaded_change << ')';
-					std::string record_str = record.str();
-					db->record_token(record_str);
+					db->record_token(u.id, tor.id, static_cast<long long>(downloaded_change));
 				}
 				downloaded_change = 0;
 			}
 			
 			if(uploaded_change || downloaded_change) {
-				
-				std::stringstream record;
-				record << '(' << u.id << ',' << uploaded_change << ',' << downloaded_change << ')';
-				std::string record_str = record.str();
-				db->record_user(record_str);
+				db->record_user(u.id, uploaded_change, downloaded_change);
 			}
 		}
 	}
@@ -401,10 +398,7 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 		update_torrent = true;
 		tor.completed++;
 		
-		std::stringstream record;
-		record << '(' << u.id << ',' << tor.id << ',' << cur_time << ", '" << ip << "')";
-		std::string record_str = record.str();
-		db->record_snatch(record_str);
+		db->record_snatch(u.id, tor.id, cur_time, ip);
 		
 		// User is a seeder now!
 		tor.seeders.insert(std::pair<std::string, peer>(peer_id, *p));
@@ -478,22 +472,13 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 	if(update_torrent || tor.last_flushed + 3600 < cur_time) {
 		tor.last_flushed = cur_time;
 		
-		std::stringstream record;
-		record << '(' << tor.id << ',' << tor.seeders.size() << ',' << tor.leechers.size() << ',' << snatches << ',' << tor.balance << ')';
-		std::string record_str = record.str();
-		db->record_torrent(record_str);
+		db->record_torrent(tor.id, tor.seeders.size(), tor.leechers.size(), snatches, tor.balance);
 	}
 	
-	std::stringstream record;
-	record << '(' << u.id << ',' << tor.id << ',' << active << ',' << uploaded << ',' << downloaded << ',' << upspeed << ',' << downspeed << ',' << left << ',' << (cur_time - p->first_announced) << ',' << p->announces << ',';
-	std::string record_str = record.str();
-	db->record_peer(record_str, ip, peer_id, headers["user-agent"]);
+	db->record_peer(u.id, tor.id, active, peer_id, headers["user-agent"], ip, uploaded, downloaded, upspeed, downspeed, left, (cur_time - p->first_announced), p->announces);
 
 	if (real_uploaded_change > 0 || real_downloaded_change > 0) {
-		record.str("");
-		record << '(' << u.id << ',' << downloaded << ',' << left << ',' << uploaded << ',' << upspeed << ',' << downspeed << ',' << (cur_time - p->first_announced);
-		record_str = record.str();
-		db->record_peer_hist(record_str, peer_id, tor.id);
+		db->record_peer_hist(u.id, static_cast<long long>(downloaded), static_cast<long long>(left), static_cast<long long>(uploaded), static_cast<long long>(upspeed), static_cast<long long>(downspeed), static_cast<long long>((cur_time - p->first_announced)), peer_id, tor.id);
 	}
 	
 	std::string response = "d8:intervali";
