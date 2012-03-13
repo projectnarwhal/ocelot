@@ -69,12 +69,12 @@ class Mongo {
 		void load_tokens(std::unordered_map<std::string, torrent> &torrents);
 		void load_whitelist(std::vector<std::string> &whitelist);
 		
-		void record_user(int id, long long uploaded_change, long long downloaded_change); // (id,uploaded_change,downloaded_change)
-		void record_torrent(int tid, int seeders, int leechers, int snatched_change, int balance); // (id,seeders,leechers,snatched_change,balance)
-		void record_snatch(int uid, int tid, time_t tstamp, std::string ip); // (uid,fid,tstamp,ip)
-		void record_peer(int uid, int fid, int active, std::string peerid, std::string useragent, std::string &ip, long long uploaded, long long downloaded, long long upspeed, long long downspeed, long long left, time_t timespent, unsigned int announces);  ; // (uid,fid,active,peerid,useragent,ip,uploaded,downloaded,upspeed,downspeed,left,timespent,announces)
-		void record_token(int uid, int tid, long long downloaded_change);
-		void record_peer_hist(int uid, long long downloaded, long long left, long long uploaded, long long upspeed, long long downspeed, long long tstamp, std::string &peer_id, int tid);
+		void record_user(mongo::OID id, long long uploaded_change, long long downloaded_change); // (id,uploaded_change,downloaded_change)
+		void record_torrent(mongo::OID tid, int seeders, int leechers, int snatched_change, int balance); // (id,seeders,leechers,snatched_change,balance)
+		void record_snatch(mongo::OID uid, mongo::OID tid, time_t tstamp, std::string ip); // (uid,fid,tstamp,ip)
+		void record_peer(mongo::OID uid, mongo::OID fid, int active, std::string peerid, std::string useragent, std::string &ip, long long uploaded, long long downloaded, long long upspeed, long long downspeed, long long left, time_t timespent, unsigned int announces);  ; // (uid,fid,active,peerid,useragent,ip,uploaded,downloaded,upspeed,downspeed,left,timespent,announces)
+		void record_token(mongo::OID uid, mongo::OID tid, long long downloaded_change);
+		void record_peer_hist(mongo::OID uid, long long downloaded, long long left, long long uploaded, long long upspeed, long long downspeed, long long tstamp, std::string &peer_id, mongo::OID tid);
 
 		void flush();
 

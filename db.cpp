@@ -3,6 +3,7 @@
 #include "misc_functions.h"
 #include <string>
 #include <iostream>
+#include <ios>
 #include <queue>
 #include <unistd.h>
 #include <time.h>
@@ -37,20 +38,21 @@ Mongo::Mongo(std::string mongo_db, std::string mongo_host, std::string username,
 }
 
 void Mongo::load_torrents(std::unordered_map<std::string, torrent> &torrents) {
-   mongo::BSONObj fields = BSON("id" << 1 << "info_hash" << 1 << "freetorrent" << 1 << "snatched" << 1);
+   mongo::BSONObj fields = BSON("_id" << 1 << "info_hash" << 1 << "freetorrent" << 1 << "snatched" << 1);
    std::unique_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".torrents", 
-         mongo::Query().sort("id"), 0, 0, &fields);
+         mongo::Query(), 0, 0, &fields);
 
    mongo::BSONObj doc;
    while(cursor->more())
    {
       doc=cursor->next();
-      std::string info_hash = doc.getStringField("info_hash");
-      info_hash = hextostr(info_hash);
-      std::cout << "Info hash loaded: " << info_hash << std::endl << "error: " << conn.getLastError() << std::endl;
-      
+      std::string info_hash_str = doc.getStringField("info_hash");
+      std::string info_hash = hextostr(info_hash);
+      std::cout << "Info hash loaded: " << info_hash_str << std::endl << "error: " << conn.getLastError() << std::endl;
+
       torrent t;
-      t.id = doc.getIntField("id");
+      t.mongoid = doc.getField("_id").OID();
+      t.info_hash_str = info_hash_str;
       t.free_torrent = (doc.getIntField("freetorrent") == 1) ? FREE 
          : (doc.getIntField("freetorrent") == 2) ? NEUTRAL  : NORMAL;
       t.balance = 0;
@@ -62,7 +64,7 @@ void Mongo::load_torrents(std::unordered_map<std::string, torrent> &torrents) {
 
 void Mongo::load_users(std::unordered_map<std::string, user> &users) {
    //"SELECT ID, can_leech, torrent_pass FROM users_main WHERE Enabled='1';"
-   mongo::BSONObj fields = BSON("id" << 1 << "can_leech" << 1 << "torrent_pass" << 1);
+   mongo::BSONObj fields = BSON("_id" << 1 << "can_leech" << 1 << "torrent_pass" << 1);
    std::unique_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".users", mongo::Query(BSON("enabled" << 1)), 0, 0, &fields);
    
    mongo::BSONObj doc;
@@ -72,7 +74,7 @@ void Mongo::load_users(std::unordered_map<std::string, user> &users) {
       std::string passkey = doc.getStringField("torrent_pass");
 
       user u;
-      u.id = doc.getIntField("id");
+      u.mongoid = doc.getField("_id").OID();
       u.can_leech = doc.getIntField("can_leech");
       users[passkey] = u;
    }
@@ -81,7 +83,7 @@ void Mongo::load_users(std::unordered_map<std::string, user> &users) {
 void Mongo::load_tokens(std::unordered_map<std::string, torrent> &torrents) {
    //"SELECT uf.UserID, t.info_hash FROM users_freeleeches AS uf JOIN torrents AS t ON t.ID = uf.TorrentID WHERE uf.Expired = '0';"
    //
-   mongo::BSONObj fields = BSON("id" << 1 <<  "freeleeches.info_hash" << 1);
+   mongo::BSONObj fields = BSON("_id" << 1 <<  "freeleeches.info_hash" << 1);
    std::unique_ptr<mongo::DBClientCursor> cursor = conn.query(db + ".users", mongo::Query(BSON("freeleeches.expired" << 0)), 0, 0, &fields);
    mongo::BSONObj doc;
    while(cursor->more())
@@ -91,7 +93,7 @@ void Mongo::load_tokens(std::unordered_map<std::string, torrent> &torrents) {
       std::unordered_map<std::string, torrent>::iterator it = torrents.find(info_hash);
       if (it != torrents.end()) {
          torrent &tor = it->second;
-         tor.tokened_users.insert(doc.getIntField("id"));
+         tor.tokened_users.insert(doc.getField("_id").OID());
       }
    }
 }
@@ -109,21 +111,21 @@ void Mongo::load_whitelist(std::vector<std::string> &whitelist) {
    }
 }
 
-void Mongo::record_token(int uid, int tid, long long downloaded_change) {
+void Mongo::record_token(mongo::OID uid, mongo::OID tid, long long downloaded_change) {
    boost::mutex::scoped_lock lock(user_token_lock);
    mongo_query m;
    m.table = ".users";
-   m.query = mongo::Query(BSON("id" << uid << "freeleeches.id" << tid));
+   m.query = mongo::Query(BSON("_id" << uid << "freeleeches._id" << tid));
    m.data = BSON("$inc" << BSON("downloaded" << downloaded_change));
 
    update_token_buffer.push_back(m);
 }
 
-void Mongo::record_user(int id, long long uploaded_change, long long downloaded_change) {
+void Mongo::record_user(mongo::OID id, long long uploaded_change, long long downloaded_change) {
    boost::mutex::scoped_lock lock(user_buffer_lock);
    mongo_query m;
    m.table = ".users";
-   m.query = mongo::Query(BSON("id" << id));
+   m.query = mongo::Query(BSON("_id" << id));
    m.data = BSON("$inc" << BSON("uploaded" << uploaded_change << "downloaded" << downloaded_change));
 
    update_user_buffer.push_back(m);
@@ -131,11 +133,11 @@ void Mongo::record_user(int id, long long uploaded_change, long long downloaded_
 
 
 //TODO: last_action = IF(VALUES(Seeders) > 0, NOW(), last_action);
-void Mongo::record_torrent(int tid, int seeders, int leechers, int snatched_change, int balance) {
+void Mongo::record_torrent(mongo::OID tid, int seeders, int leechers, int snatched_change, int balance) {
    boost::mutex::scoped_lock lock(torrent_buffer_lock);
    mongo_query m;
    m.table = ".torrents";
-   m.query = mongo::Query(BSON("id" << tid));
+   m.query = mongo::Query(BSON("_id" << tid));
    m.data = BSON("$set" << BSON("seeders" << seeders << "leechers" << leechers << "balance" << balance) << "$inc" << BSON("snatched" << snatched_change));
 
    update_torrent_buffer.push_back(m);
@@ -150,32 +152,32 @@ void Mongo::record_torrent(int tid, int seeders, int leechers, int snatched_chan
 
 // TODO: Double check timespet is correctly upserted and mtime
 // Deal with ip, peer_id, useragent better
-void Mongo::record_peer(int uid, int fid, int active, std::string peerid, std::string useragent, std::string &ip, long long uploaded, long long downloaded, long long upspeed, long long downspeed, long long left, time_t timespent, unsigned int announces) {
+void Mongo::record_peer(mongo::OID uid, mongo::OID fid, int active, std::string peerid, std::string useragent, std::string &ip, long long uploaded, long long downloaded, long long upspeed, long long downspeed, long long left, time_t timespent, unsigned int announces) {
    boost::mutex::scoped_lock (peer_buffer_lock);
    mongo_query m;
    m.table = ".users";
-   m.query = mongo::Query(BSON("id" << uid << "files.id" << fid));
+   m.query = mongo::Query(BSON("_id" << uid << "files._id" << fid));
    m.data = BSON("$set" << BSON("files.active" << active << "files.uploaded" << uploaded << "files.downloaded" << downloaded << "files.upspeed" << upspeed << "files.downspeed" << downspeed << "files.remaining" << left << "files.timespent" << static_cast<long long>(timespent) << "files.announced" << announces << "files.useragent" << useragent << "files.ip" << ip << "files.peerid" << peerid << "files.mtime" << static_cast<long long>(time(NULL))));
    //q << record << ',' << mongopp::quote << peer_id << ',' << tid << ',' << time(NULL) << ')';
    update_peer_buffer.push_back(m);
 }
 
-void Mongo::record_peer_hist(int uid, long long downloaded, long long left, long long uploaded, long long upspeed, long long downspeed, long long tstamp, std::string &peer_id, int tid) {
+void Mongo::record_peer_hist(mongo::OID uid, long long downloaded, long long left, long long uploaded, long long upspeed, long long downspeed, long long tstamp, std::string &peer_id, mongo::OID tid) {
    boost::mutex::scoped_lock (peer_hist_buffer_lock);
    mongo_query m;
    m.table = ".users";
-   m.query = mongo::Query(BSON("id" << uid << "history.tid" << tid));
+   m.query = mongo::Query(BSON("_id" << uid << "history.tid" << tid));
    m.data = BSON("$set" << BSON("history.downloaded" << downloaded << "history.remaining" << left << "history.uploaded" << uploaded << "history.upspeed" << upspeed << "history.downspeed" << downspeed << "history.timespent" << (tstamp) << "history.peer_id" << peer_id));
 
    update_peer_hist_buffer.push_back(m);
 }
 
-void Mongo::record_snatch(int uid, int tid, time_t tstamp, std::string ip) {
+void Mongo::record_snatch(mongo::OID uid, mongo::OID tid, time_t tstamp, std::string ip) {
    boost::mutex::scoped_lock lock(snatch_buffer_lock);
    mongo_query m;
    m.table = ".users";
-   m.query = mongo::Query(BSON("id" << uid));
-   m.data = BSON("snatches.id" << tid << "snatches.tstamp" << static_cast<long long>(tstamp) << "snatches.ip" << ip);
+   m.query = mongo::Query(BSON("_id" << uid));
+   m.data = BSON("snatches._id" << tid << "snatches.tstamp" << static_cast<long long>(tstamp) << "snatches.ip" << ip);
 
    update_snatch_buffer.push_back(m);
 }

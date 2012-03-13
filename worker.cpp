@@ -23,6 +23,8 @@
 #include <boost/thread/locks.hpp>
 #include <boost/bind.hpp>
 
+#include <mongo/client/dbclient.h>
+
 //---------- Worker - does stuff with input
 worker::worker(torrent_list &torrents, user_list &users, std::vector<std::string> &_whitelist, config * conf_obj, Mongo * db_obj, site_comm &sc) : torrents_list(torrents), users_list(users), whitelist(_whitelist), conf(conf_obj), db(db_obj), s_comm(sc) {
 	status = OPEN;
@@ -178,8 +180,8 @@ std::string worker::work(std::string &input, std::string &ip) {
 		std::string info_hash_decoded = hex_decode(params["info_hash"]);
 		torrent_list::iterator tor = torrents_list.find(info_hash_decoded);
 
-               //DELETE ME
-                std::cout << "Info hash is " << info_hash_decoded << std::endl;
+    //DELETE ME
+    std::cout << "Info hash is " << info_hash_decoded << std::endl;
 
 		if(tor == torrents_list.end()) {
 			return error("unregistered torrent");
@@ -314,20 +316,20 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 				upspeed = uploaded_change / (cur_time - p->last_announced);
 				downspeed = downloaded_change / (cur_time - p->last_announced);
 			}
-			std::set<int>::iterator sit = tor.tokened_users.find(u.id);
+			std::set<mongo::OID>::iterator sit = tor.tokened_users.find(u.mongoid);
 			if (tor.free_torrent == NEUTRAL) {
 				downloaded_change = 0;
 				uploaded_change = 0;
 			} else if(tor.free_torrent == FREE || sit != tor.tokened_users.end()) {
 				if(sit != tor.tokened_users.end()) {
 					expire_token = true;
-					db->record_token(u.id, tor.id, static_cast<long long>(downloaded_change));
+					db->record_token(u.mongoid, tor.mongoid, static_cast<long long>(downloaded_change));
 				}
 				downloaded_change = 0;
 			}
 			
 			if(uploaded_change || downloaded_change) {
-				db->record_user(u.id, uploaded_change, downloaded_change);
+				db->record_user(u.mongoid, uploaded_change, downloaded_change);
 			}
 		}
 	}
@@ -398,14 +400,14 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 		update_torrent = true;
 		tor.completed++;
 		
-		db->record_snatch(u.id, tor.id, cur_time, ip);
+		db->record_snatch(u.mongoid, tor.mongoid, cur_time, ip);
 		
 		// User is a seeder now!
 		tor.seeders.insert(std::pair<std::string, peer>(peer_id, *p));
 		tor.leechers.erase(peer_id);
 		if(expire_token) {
 			(&s_comm)->expire_token(tor.id, u.id);
-			tor.tokened_users.erase(u.id);
+			tor.tokened_users.erase(u.mongoid);
 		}
 		// do cache expire
 	}
@@ -472,13 +474,13 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 	if(update_torrent || tor.last_flushed + 3600 < cur_time) {
 		tor.last_flushed = cur_time;
 		
-		db->record_torrent(tor.id, tor.seeders.size(), tor.leechers.size(), snatches, tor.balance);
+		db->record_torrent(tor.mongoid, tor.seeders.size(), tor.leechers.size(), snatches, tor.balance);
 	}
 	
-	db->record_peer(u.id, tor.id, active, peer_id, headers["user-agent"], ip, uploaded, downloaded, upspeed, downspeed, left, (cur_time - p->first_announced), p->announces);
+	db->record_peer(u.mongoid, tor.mongoid, active, peer_id, headers["user-agent"], ip, uploaded, downloaded, upspeed, downspeed, left, (cur_time - p->first_announced), p->announces);
 
 	if (real_uploaded_change > 0 || real_downloaded_change > 0) {
-		db->record_peer_hist(u.id, static_cast<long long>(downloaded), static_cast<long long>(left), static_cast<long long>(uploaded), static_cast<long long>(upspeed), static_cast<long long>(downspeed), static_cast<long long>((cur_time - p->first_announced)), peer_id, tor.id);
+		db->record_peer_hist(u.mongoid, static_cast<long long>(downloaded), static_cast<long long>(left), static_cast<long long>(uploaded), static_cast<long long>(upspeed), static_cast<long long>(downspeed), static_cast<long long>((cur_time - p->first_announced)), peer_id, tor.mongoid);
 	}
 	
 	std::string response = "d8:intervali";
@@ -604,7 +606,8 @@ std::string worker::update(std::map<std::string, std::string> &params) {
 		}
 	} else if(params["action"] == "add_token") {
 		std::string info_hash = hex_decode(params["info_hash"]);
-		int user_id = atoi(params["userid"].c_str());
+		mongo::OID user_id = mongo::OID();
+		user_id.init(params["userid"].c_str());
 		auto torrent_it = torrents_list.find(info_hash);
 		if (torrent_it != torrents_list.end()) {
 			torrent_it->second.tokened_users.insert(user_id);
@@ -613,7 +616,8 @@ std::string worker::update(std::map<std::string, std::string> &params) {
 		}
 	} else if(params["action"] == "remove_token") {
 		std::string info_hash = hex_decode(params["info_hash"]);
-		int user_id = atoi(params["userid"].c_str());
+		mongo::OID user_id = mongo::OID();
+		user_id.init(params["userid"].c_str());
 		auto torrent_it = torrents_list.find(info_hash);
 		if (torrent_it != torrents_list.end()) {
 			torrent_it->second.tokened_users.erase(user_id);

@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <set>
 #include <boost/thread/thread.hpp>
+#include <mongo/client/dbclient.h>
 
 typedef struct {
 	int userid;
@@ -26,6 +27,8 @@ enum freetype { NORMAL, FREE, NEUTRAL };
 
 typedef struct {
 	int id;
+	mongo::OID mongoid;
+	std::string info_hash_str;
 	time_t last_seeded;
 	long long balance;
 	int completed;
@@ -33,12 +36,13 @@ typedef struct {
 	std::map<std::string, peer> seeders;
 	std::map<std::string, peer> leechers;
 	std::string last_selected_seeder;
-	std::set<int> tokened_users;
+	std::set<mongo::OID> tokened_users;
 	time_t last_flushed;
 } torrent;
 
 typedef struct {
 	int id;
+	mongo::OID mongoid;
 	bool can_leech;
 } user;
 
