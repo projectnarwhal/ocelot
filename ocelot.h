@@ -7,7 +7,7 @@
 #include <mongo/client/dbclient.h>
 
 typedef struct {
-	int userid;
+	mongo::OID userid;
 	std::string peer_id;
 	std::string user_agent;
 	std::string ip_port;
@@ -26,7 +26,6 @@ typedef std::map<std::string, peer> peer_list;
 enum freetype { NORMAL, FREE, NEUTRAL };
 
 typedef struct {
-	int id;
 	mongo::OID mongoid;
 	std::string info_hash_str;
 	time_t last_seeded;
@@ -41,7 +40,6 @@ typedef struct {
 } torrent;
 
 typedef struct {
-	int id;
 	mongo::OID mongoid;
 	bool can_leech;
 } user;

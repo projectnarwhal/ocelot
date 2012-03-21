@@ -282,7 +282,7 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 	if(inserted || params["event"] == "started" || uploaded < p->uploaded || downloaded < p->downloaded) {
 		//New peer on this torrent
 		update_torrent = true;
-		p->userid = u.id;
+		p->userid = u.mongoid;
 		p->peer_id = peer_id;
 		p->user_agent = headers["user-agent"];
 		p->first_announced = cur_time;
@@ -388,11 +388,11 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 
 		if(left > 0) {
 			if(tor.leechers.erase(peer_id) == 0) {
-				std::cout << "Tried and failed to remove seeder from torrent " << tor.id << std::endl;
+				std::cout << "Tried and failed to remove seeder from torrent " << tor.mongoid.toString() << std::endl;
 			}
 		} else {
 			if(tor.seeders.erase(peer_id) == 0) {
-				std::cout << "Tried and failed to remove leecher from torrent " << tor.id << std::endl;
+				std::cout << "Tried and failed to remove leecher from torrent " << tor.mongoid.toString() << std::endl;
 			}
 		}
 	} else if(params["event"] == "completed") {
@@ -406,7 +406,7 @@ std::string worker::announce(torrent &tor, user &u, std::map<std::string, std::s
 		tor.seeders.insert(std::pair<std::string, peer>(peer_id, *p));
 		tor.leechers.erase(peer_id);
 		if(expire_token) {
-			(&s_comm)->expire_token(tor.id, u.id);
+			(&s_comm)->expire_token(tor.mongoid, u.mongoid);
 			tor.tokened_users.erase(u.mongoid);
 		}
 		// do cache expire
@@ -545,11 +545,11 @@ std::string worker::update(std::map<std::string, std::string> &params) {
 		} else {
 			users_list[newpasskey] = i->second;;
 			users_list.erase(oldpasskey);
-			std::cout << "changed passkey from " << oldpasskey << " to " << newpasskey << " for user " << i->second.id << std::endl;
+			std::cout << "changed passkey from " << oldpasskey << " to " << newpasskey << " for user " << i->second.mongoid.toString() << std::endl;
 		}
 	} else if(params["action"] == "add_torrent") {
 		torrent t;
-		t.id = strtolong(params["id"]);
+		t.mongoid = mongo::OID(params["_id"]);
 		std::string info_hash = params["info_hash"];
 		info_hash = hex_decode(info_hash);
 		if(params["freetorrent"] == "0") {
@@ -563,7 +563,7 @@ std::string worker::update(std::map<std::string, std::string> &params) {
 		t.completed = 0;
 		t.last_selected_seeder = "";
 		torrents_list[info_hash] = t;
-		std::cout << "Added torrent " << t.id<< ". FL: " << t.free_torrent << " " << params["freetorrent"] << std::endl;
+		std::cout << "Added torrent " << t.mongoid.toString() << ". FL: " << t.free_torrent << " " << params["freetorrent"] << std::endl;
 	} else if(params["action"] == "update_torrent") {
 		std::string info_hash = params["info_hash"];
 		info_hash = hex_decode(info_hash);
@@ -578,7 +578,7 @@ std::string worker::update(std::map<std::string, std::string> &params) {
 		auto torrent_it = torrents_list.find(info_hash);
 		if (torrent_it != torrents_list.end()) {
 			torrent_it->second.free_torrent = fl;
-			std::cout << "Updated torrent " << torrent_it->second.id << " to FL " << fl << std::endl;
+			std::cout << "Updated torrent " << torrent_it->second.mongoid.toString() << " to FL " << fl << std::endl;
 		} else {
 			std::cout << "Failed to find torrent " << info_hash << " to FL " << fl << std::endl;
 		}
@@ -599,7 +599,7 @@ std::string worker::update(std::map<std::string, std::string> &params) {
 			auto torrent_it = torrents_list.find(info_hash);
 			if (torrent_it != torrents_list.end()) {
 				torrent_it->second.free_torrent = fl;
-				std::cout << "Updated torrent " << torrent_it->second.id << " to FL " << fl << std::endl;
+				std::cout << "Updated torrent " << torrent_it->second.mongoid.toString() << " to FL " << fl << std::endl;
 			} else {
 				std::cout << "Failed to find torrent " << info_hash << " to FL " << fl << std::endl;
 			}
@@ -629,19 +629,19 @@ std::string worker::update(std::map<std::string, std::string> &params) {
 		info_hash = hex_decode(info_hash);
 		auto torrent_it = torrents_list.find(info_hash);
 		if (torrent_it != torrents_list.end()) {
-			std::cout << "Deleting torrent " << torrent_it->second.id << std::endl;
+			std::cout << "Deleting torrent " << torrent_it->second.mongoid.toString() << std::endl;
 			torrents_list.erase(torrent_it);
 		} else {
 			std::cout << "Failed to find torrent " << info_hash << " to delete " << std::endl;
 		}
 	} else if(params["action"] == "add_user") {
 		std::string passkey = params["passkey"];
-		unsigned int id = strtolong(params["id"]);
+		std::string _id = params["id"];
 		user u;
-		u.id = id;
+		u.mongoid = mongo::OID(_id);
 		u.can_leech = 1;
 		users_list[passkey] = u;
-		std::cout << "Added user " << id << std::endl;
+		std::cout << "Added user " << _id << std::endl;
 	} else if(params["action"] == "remove_user") {
 		std::string passkey = params["passkey"];
 		users_list.erase(passkey);
@@ -701,7 +701,7 @@ std::string worker::update(std::map<std::string, std::string> &params) {
 		std::cout << "Info for torrent '" << info_hash_hex << "'" << std::endl;
 		auto torrent_it = torrents_list.find(info_hash);
 		if (torrent_it != torrents_list.end()) {
-			std::cout << "Torrent " << torrent_it->second.id
+			std::cout << "Torrent " << torrent_it->second.mongoid.toString()
 				<< ", freetorrent = " << torrent_it->second.free_torrent << std::endl;
 		} else {
 			std::cout << "Failed to find torrent " << info_hash_hex << std::endl;

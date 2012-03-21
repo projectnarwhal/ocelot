@@ -5,6 +5,7 @@
 #include <ostream>
 #include <string>
 #include <boost/asio.hpp>
+#include <mongo/client/dbclient.h>
 
 #include "config.h"
 
@@ -16,7 +17,7 @@ class site_comm {
 	
 	public:
 		site_comm(config &conf);
-		bool expire_token(int torrent, int user);
+		bool expire_token(mongo::OID torrent, mongo::OID user);
 		~site_comm();
 };
 #endif

@@ -14,7 +14,9 @@ site_comm::site_comm(config &config)
 	conf = config;
 }
 
-bool site_comm::expire_token(int torrent, int user)
+// TODO: This is for gazelle, fix it up for Narwhal after site-side
+// stuff is implemented.
+bool site_comm::expire_token(mongo::OID torrent, mongo::OID user)
 {
 	try {
 		boost::asio::io_service io_service;
@@ -36,7 +38,7 @@ bool site_comm::expire_token(int torrent, int user)
 
 		boost::asio::streambuf request;
 		std::ostream request_stream(&request);
-		request_stream << "GET /tools.php?key=" << conf.site_password << "&type=expiretoken&action=ocelot&torrentid=" << torrent << "&userid=" << user << " HTTP/1.0\r\n";
+		request_stream << "GET /tools.php?key=" << conf.site_password << "&type=expiretoken&action=ocelot&torrentid=" << torrent.toString() << "&userid=" << user.toString() << " HTTP/1.0\r\n";
 		request_stream << "Host: " << conf.site_host << "\r\n";
 		request_stream << "Accept: */*\r\n";
 		request_stream << "Connection: close\r\n\r\n";
